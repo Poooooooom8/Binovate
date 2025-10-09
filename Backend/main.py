@@ -1,20 +1,26 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Header
 from .database import engine, Base, get_db
 from sqlalchemy.orm import Session
-from .models import User
-from .schema import UserCreated
+from .models import User, Bin, UserBin
+from .schema import UserCreated, UserResponse, TokenData, Status, UserBinCreated
 from pwdlib import PasswordHash
+from fastapi.security import OAuth2PasswordBearer
+from typing import Annotated
 from datetime import datetime, timedelta, timezone
 import jwt
-from fastapi.responses import JSONResponse
+from jwt.exceptions import InvalidTokenError
+import hmac
+import hashlib
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 app = FastAPI()
 Base.metadata.create_all(bind=engine)
 
 origins = [
     "http://localhost:8080",
-    "http://localhost:3000"
+    "http://localhost:3000",
+    "https://binovate.vercel.app"
 ]
 
 app.add_middleware(
@@ -65,7 +71,6 @@ def get_user(db, username : str):
     user = db.query(User).filter(User.username == username).first()
     if user:
         return user
-
 def authenticate_user(db, username: str, password: str): # เช็คดูว่ามี user นี้จริงๆไหมแล้วรหัสตรงกับที่ hash ไหมถ้ามี return user ออกไป
     """Check User Login system correct or not"""
     user = get_user(db, username)
@@ -75,7 +80,7 @@ def authenticate_user(db, username: str, password: str): # เช็คดูว
         return False
     return user
 
-SECRET_KEY = "f3e0d5c8c7f8467c9d2b4a8e34c6a1e0b7f9d9a5a2f442e7a0c2e5d3b8f7c4e9"
+SECRET_KEY = os.getenv("SECRET_KEY")
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440
 ALGORITHM = "HS256"
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
@@ -97,6 +102,80 @@ async def login_for_access_token(user_input: UserCreated, db: Session = Depends(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password", headers={"WWW-Authenticate" : "Bearer"})
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(data={"sub": user.username}, expires_delta=access_token_expires)
-    response = JSONResponse(content={"message":"Login Success"})
-    response.set_cookie(key="access_token", value=access_token)
-    return response
+    return { "access_token": access_token, "token_type": "bearer", "message" : "Login Success"}
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db: Session = Depends(get_db)): #ตรวจสอบว่ามี token หรือ token หมดอายุหรือยัง
+    """Check Token Permission of user"""
+    credentials_exception = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials", headers={"WWW-Authenticate":"Bearer"})
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHM)
+        username = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except InvalidTokenError:
+        raise credentials_exception
+    user = get_user(db, token_data.username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+@app.get("/api/users/me", response_model=UserResponse) # ใช้ดึงเช็คข้อมูลจาก token แล้วเอาข้อมูลจาก token ไปหาใน database แล้วแมปเข้ากับ UserResponse ทำให้จะไมไ่ด้ password ออกมาด้วย
+def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
+    """API For get own data of each user"""
+    if current_user:
+        current_user.id = str(current_user.id)
+    return current_user
+
+SIGNATURE_SECRET = os.getenv("SECRET_KEY") #Signature Secret ของ header ที่มากับ request ของถังขยะ 
+def verify_signature(signature, status):
+    """Check Signature Of BinStatus API"""
+    message = status.bin_id + status.timestamp
+    expected_signature = hmac.new(SIGNATURE_SECRET.encode(), message.encode() ,hashlib.sha256).hexdigest() #Signature ของถังขยะมาจาก bin_id + timestamp มาบวกกันแล้วเข้ารหัสด้วย Secret เดียวกัน
+    if not hmac.compare_digest(expected_signature, signature): #ถ้า Siganture ที่เข้ารหัสด้วย Secret เดียวกันตรงกันแปลว่า signature ที่ส่งมาถูก้อง
+        return None
+    return True
+
+@app.put("/api/v1/binovate/status") #api สำหรับรับ request จากถังขยะ
+async def update_status(body: Status, db: Session = Depends(get_db), signature: Annotated[str | None, Header(alias="signature")] = None):
+    """API For Update Status of bin"""
+    if not signature:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing signature")
+    valid = verify_signature(signature, body)
+    if valid is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
+    bin = db.query(Bin).filter(Bin.bin_id == body.bin_id).first()
+    if not bin: #กรณีที่ถังขยะเปิดใช้งานครั้งแรกและยังไม่่เคยมีในฐานข้อมูลแต่ Signature ที่ส่งมาถูกต้อง
+        added_bin = Bin(bin_id=body.bin_id, status=body.status)
+        db.add(added_bin)
+        db.commit()
+        db.refresh(added_bin)
+        bin = added_bin
+    bin.status = body.status
+    db.commit()
+    db.refresh(bin)
+    return bin
+
+@app.get("/api/v1/binovate/status") #API สำหรับให้ frontend ดึงไปใช้เพื่อดูถังขยะไหนเต็มบ้างโดยจะขึ้นแค่ถังขยะที่แสกนแล้ว
+async def read_status(current_user : Annotated[User, Depends(get_current_user)], db: Session = Depends(get_db)):
+    """API For user get status of bins"""
+    if current_user:
+        data = db.query(Bin).join(UserBin, Bin.bin_id == UserBin.bin_id).filter(UserBin.user_id == current_user.id).all()
+        return data
+
+@app.post("/api/v1/binovate/user/bins") #API สำหรับตอนที่ user ยิงมาเพื่อเพิ่มถังขยะใน list
+async def create_user_bin(user_input: UserBinCreated, current_user : Annotated[User, Depends(get_current_user)], db: Session = Depends(get_db)):
+    """API For add bin to user"""
+    if current_user:
+        bin = db.query(Bin).filter(Bin.bin_id == user_input.bin_id).first()
+        if not bin:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid code.")
+        userbin = db.query(UserBin).filter(UserBin.bin_id == user_input.bin_id, UserBin.user_id == current_user.id).first()
+        if userbin:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You already have this bin.")
+        added_userbin = UserBin(user_id=current_user.id, bin_id=user_input.bin_id)
+        db.add(added_userbin)
+        db.commit()
+        db.refresh(added_userbin)
+        return {"message" : "Success"}

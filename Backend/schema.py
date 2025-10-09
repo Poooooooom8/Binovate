@@ -16,3 +16,18 @@ class UserResponse(BaseModel):
     username : str
     class Config:
         from_attributes = True #เมื่อได้สิ่งที่จะ return จะแมปกับ Class นี้ก่อน
+
+class TokenData(BaseModel):
+    """Schema for Token"""
+    username: str | None = None
+
+class Status(BaseModel): #ใช้กับ Rquest ของถังขยะ
+    """Schema for bin request"""
+    bin_id: str
+    status: str
+    timestamp: str
+
+class UserBinCreated(BaseModel):
+    """Schema for user Scan QRcode"""
+    user_id: str
+    bin_id: str
