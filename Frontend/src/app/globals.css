@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+.input_rounded {
+    transition: border-radius 0.5s ease-in-out;
+}
+
+.input_rounded:hover {
+    border-radius: 10px;
+}
+
+:root {
+  --background: white;
+  --loginbackground: #0a4ecc;
+  --fontcolor: black;
+  --buttoncolor: #0a4ecc;
+  --boxcolor: #ff7e31;
+  --inputbackground: white;
+  --navbackground: #0a4ecc;
+  --binovatefontcolor: black;
+  --binovateboxcolor: #eff6fc;
+}
+
+[data-theme='dark'] {
+  --background: #1c1c1d;
+  --loginbackground: #1c1c1d;
+  --fontcolor: white;
+  --buttoncolor: #ff7e31;
+  --boxcolor: #ff7e31;
+  --inputbackground: #484c4e;
+  --navbackground: #282828;
+  --binovatefontcolor: #b0b3b8;
+  --binovateboxcolor: #252728;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-fontcolor: var(--fontcolor);
+  --color-buttoncolor: var(--buttoncolor);
+  --color-boxcolor: var(--boxcolor);
+  --color-inputbackground: var(--inputbackground);
+  --color-navbackground: var(--navbackground);
+  --color-binovatefontcolor: var(--binovatefontcolor);
+  --color-binovateboxcolor: var(--binovateboxcolor);
+  --color-loginbackground: var(--loginbackground)
+}
