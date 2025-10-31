@@ -147,11 +147,12 @@ async def update_status(body: Status, db: Session = Depends(get_db), signature: 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
     bin = db.query(Bin).filter(Bin.bin_id == body.bin_id).first()
     if not bin: #กรณีที่ถังขยะเปิดใช้งานครั้งแรกและยังไม่่เคยมีในฐานข้อมูลแต่ Signature ที่ส่งมาถูกต้อง
-        added_bin = Bin(bin_id=body.bin_id, status=body.status)
+        added_bin = Bin(bin_id=body.bin_id, status=body.status, location=body.location)
         db.add(added_bin)
         db.commit()
         db.refresh(added_bin)
         bin = added_bin
+    bin.location = body.location
     bin.status = body.status
     db.commit()
     db.refresh(bin)

@@ -15,6 +15,7 @@ class Bin(Base):
     """For create or connect to Bin table"""
     __tablename__ = "bins"
     bin_id = Column(String, unique=True, nullable=True, primary_key=True)
+    location = Column(String, nullable=False)
     status = Column(String, nullable=False)
 
 class UserBin(Base):

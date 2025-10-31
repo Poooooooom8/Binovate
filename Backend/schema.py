@@ -24,6 +24,7 @@ class TokenData(BaseModel):
 class Status(BaseModel): #ใช้กับ Rquest ของถังขยะ
     """Schema for bin request"""
     bin_id: str
+    location: str
     status: str
     timestamp: str
 
